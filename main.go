@@ -1,11 +1,18 @@
 package main
 
-import "flag"
+import (
+	"flag"
+	"log"
+
+	"github.com/svladilsav00-qq/my-sleep-bot/clients/telegram"
+)
+
+const (
+	tgBotHost = "api.telegram.org"
+)
 
 func main() {
-	// token = flags.Get(token)
-
-	// tgClient = telegram.New(token)
+	tgClient = telegram.New(tgBotHost, mustToken())
 
 	// fetcher = fetcher.New()
 
@@ -20,4 +27,12 @@ func mustToken() string {
 		"",
 		"token for access to telegram bot",
 	)
+
+	flag.Parse()
+
+	if *token == "" {
+		log.Fatal("token is not specified")
+	}
+
+	return *token
 }
