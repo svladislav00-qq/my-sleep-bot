@@ -22,8 +22,8 @@ const (
 	sendMessageMethod = "sendMessage"
 )
 
-func New(host string, token string) Client {
-	return Client{
+func New(host string, token string) *Client {
+	return &Client{
 		host:     host,
 		basePath: newBasePath(token),
 		client:   http.Client{},
@@ -68,6 +68,25 @@ func (c *Client) SendMessage(chatID int64, text string) error {
 	return nil
 }
 
+func (c *Client) SendMessageWithButton(chatID int64, text string, keyboard ReplyKeyboardMarkup) error {
+	markup, err := json.Marshal(keyboard)
+	if err != nil {
+		return err
+	}
+
+	q := url.Values{}
+	q.Add("chat_id", strconv.FormatInt(chatID, 10))
+	q.Add("text", text)
+	q.Add("reply_markup", string(markup))
+
+	_, err = c.doRequest(sendMessageMethod, q)
+	if err != nil {
+		return e.Wrap("can't send message with keyboard", err)
+	}
+
+	return nil
+}
+
 func (c *Client) doRequest(method string, query url.Values) (data []byte, err error) {
 
 	defer func() { err = e.WrapIfErr("can't do request, err", err) }()
@@ -92,7 +111,7 @@ func (c *Client) doRequest(method string, query url.Values) (data []byte, err er
 
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(req.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}

@@ -7,13 +7,13 @@ import (
 	"github.com/svladilsav00-qq/my-sleep-bot/clients/telegram"
 	"github.com/svladilsav00-qq/my-sleep-bot/events"
 	"github.com/svladilsav00-qq/my-sleep-bot/lib/e"
-	"github.com/svladilsav00-qq/my-sleep-bot/storage/postgres"
+	"github.com/svladilsav00-qq/my-sleep-bot/storage"
 )
 
 type Processor struct {
 	tg      *telegram.Client
 	offset  int
-	storage postgres.Storage
+	storage storage.Storage
 
 	preparing     map[int64]Preparing
 	preparingStat map[int64]PreparingStat
@@ -30,11 +30,12 @@ var (
 	ErrUnknownMetaType  = errors.New("unknown meta type")
 )
 
-func New(client *telegram.Client, storage postgres.Storage) *Processor {
+func New(client *telegram.Client, storage storage.Storage) *Processor {
 	return &Processor{
-		tg:        client,
-		storage:   storage,
-		preparing: make(map[int64]Preparing),
+		tg:            client,
+		storage:       storage,
+		preparing:     make(map[int64]Preparing),
+		preparingStat: make(map[int64]PreparingStat),
 	}
 }
 
@@ -74,6 +75,11 @@ func (p *Processor) processMessage(event events.Event) error {
 		return e.Wrap("can't process message", err)
 	}
 
+	if err := p.doCmd(event.Text, meta.ChatID, meta.UserID); err != nil {
+		return e.Wrap("can't process message", err)
+	}
+
+	return nil
 }
 
 func meta(event events.Event) (Meta, error) {
