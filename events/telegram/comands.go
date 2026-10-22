@@ -237,6 +237,7 @@ func (p *Processor) stat(userID, chatID int64, text string) (err error) {
 
 		p.mu.Lock()
 		delete(p.preparingStat, userID)
+		p.mu.Unlock()
 
 		if len(records) == 0 {
 			return p.tg.SendMessage(chatID, msgNoRecords)
