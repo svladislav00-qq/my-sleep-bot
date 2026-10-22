@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,6 +16,11 @@ type Client struct {
 	host     string
 	basePath string
 	client   http.Client
+}
+
+type ApiResponse struct {
+	Ok          bool   `json:"ok"`
+	Description string `json:"description"`
 }
 
 const (
@@ -68,7 +74,7 @@ func (c *Client) SendMessage(chatID int64, text string) error {
 	return nil
 }
 
-func (c *Client) SendMessageWithButton(chatID int64, text string, keyboard ReplyKeyboardMarkup) error {
+func (c *Client) SendMessageWithButton(chatID int64, text string, keyboard InlineKeyboardMarkup) error {
 	markup, err := json.Marshal(keyboard)
 	if err != nil {
 		return err
@@ -114,6 +120,15 @@ func (c *Client) doRequest(method string, query url.Values) (data []byte, err er
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+
+	var apiResp ApiResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, e.Wrap("can't decode telegram response", err)
+	}
+
+	if !apiResp.Ok {
+		return nil, fmt.Errorf("Telegram API error: %s", apiResp.Description)
 	}
 
 	return body, nil

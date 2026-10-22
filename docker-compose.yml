@@ -1,0 +1,40 @@
+
+
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: sleep_bot_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-create-databases.sql:ro
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d postgres
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    
+
+  sleep_bot_tg:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+       DATABASE_URL: "host=postgres user=${POSTGRES_USER:-postgres} password=${POSTGRES_PASSWORD} dbname=sleep_bot port=5432 sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

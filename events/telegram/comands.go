@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	AddTimeCmd = "/addTime"
+	addTimeCmd = "/addtime"
 	HelpCmd    = "/help"
 	StartCmd   = "/start"
 	InfoCmd    = "/info"
@@ -34,13 +34,27 @@ type PreparingStat struct {
 
 const layout = "02.01.2006 15:04"
 
+var userLocation = time.FixedZone("MSK", 3*60*60)
+
 func (p *Processor) doCmd(text string, chatID int64, userID int64) error {
 	text = strings.TrimSpace(text)
 
 	log.Printf("got new command '%s' from user_id = '%d'", text, userID)
 
+	p.mu.Lock()
+	_, isPreparing := p.preparing[userID]
+	_, isPreparingStat := p.preparingStat[userID]
+	p.mu.Unlock()
+
+	if isPreparing && text != addTimeCmd {
+		return p.addTime(chatID, userID, text)
+	}
+
+	if isPreparingStat && text != StatCmd {
+		return p.stat(userID, chatID, text)
+	}
 	switch text {
-	case AddTimeCmd:
+	case addTimeCmd:
 		return p.addTime(chatID, userID, text)
 	case StatCmd:
 		return p.stat(userID, chatID, text)
@@ -58,7 +72,7 @@ func (p *Processor) doCmd(text string, chatID int64, userID int64) error {
 func (p *Processor) addTime(chatID int64, userID int64, text string) (err error) {
 	defer func() { err = e.WrapIfErr("can't do command: save time", err) }()
 
-	if strings.TrimSpace(text) == "/addTime" {
+	if strings.TrimSpace(text) == "/addtime" {
 		p.mu.Lock()
 		p.preparing[userID] = Preparing{
 			userID: userID,
@@ -74,17 +88,17 @@ func (p *Processor) addTime(chatID int64, userID int64, text string) (err error)
 	p.mu.Unlock()
 
 	if !ok {
-		return p.tg.SendMessage(chatID, "Для начала выбери команду /addTime или введи её в чат")
+		return p.tg.SendMessage(chatID, msgAddErr)
 	}
 
 	switch pr.step {
 	case "sleep_time":
-		sleepTime, parseErr := parsSleepTime(text, time.Local)
+		sleepTime, parseErr := parsSleepTime(text, userLocation)
 		if parseErr != nil {
 			return p.tg.SendMessage(chatID, msgWrongTime)
 		}
 
-		if sleepTime.After(time.Now()) {
+		if sleepTime.After(time.Now().In(userLocation)) {
 			return p.tg.SendMessage(chatID, msgFutureTime)
 		}
 
@@ -98,16 +112,16 @@ func (p *Processor) addTime(chatID int64, userID int64, text string) (err error)
 		return p.tg.SendMessage(chatID, msgWokeUp)
 
 	case "wake_time":
-		wakeTime, parseErr := parsSleepTime(text, time.Local)
+		wakeTime, parseErr := parsSleepTime(text, userLocation)
 		if parseErr != nil {
 			return p.tg.SendMessage(chatID, msgWrongTime)
 		}
 
 		if !wakeTime.After(pr.sleepTime) {
-			return p.tg.SendMessage(chatID, "Время пробуждения должно быть позже время засыпания. Попробуй ещё раз")
+			return p.tg.SendMessage(chatID, msgFellWokeUpErr)
 		}
 
-		if wakeTime.After(time.Now()) {
+		if wakeTime.After(time.Now().In(userLocation)) {
 			return p.tg.SendMessage(chatID, msgFutureTime)
 		}
 
@@ -118,10 +132,19 @@ func (p *Processor) addTime(chatID int64, userID int64, text string) (err error)
 		p.preparing[userID] = pr
 		p.mu.Unlock()
 
+		duration := pr.wakeTime.Sub(pr.sleepTime)
+		maxSleepDuration := 14 * time.Hour
+
+		if duration > maxSleepDuration {
+			return p.tg.SendMessage(chatID, msgBadDuration)
+		}
+
 		summary := fmt.Sprintf(
-			"Проверь запись: %s - %s. Всё верно?",
+			"Проверь запись: %s - %s. Продолжительность сна : %d ч %d мин. Всё верно? да/нет",
 			pr.sleepTime.Format("02.01.2006 15:04"),
 			pr.wakeTime.Format("02.01.2006 15:04"),
+			int(duration.Hours()),
+			int(duration.Minutes())%60,
 		)
 
 		return p.tg.SendMessage(chatID, summary)
@@ -133,7 +156,7 @@ func (p *Processor) addTime(chatID int64, userID int64, text string) (err error)
 			delete(p.preparing, userID)
 			p.mu.Unlock()
 
-			return p.tg.SendMessage(chatID, "Запись отменена")
+			return p.tg.SendMessage(chatID, msgCancelRecord)
 		}
 
 		record := storage.SleepRecord{
@@ -154,7 +177,7 @@ func (p *Processor) addTime(chatID int64, userID int64, text string) (err error)
 		return p.tg.SendMessage(chatID, fmt.Sprintf(
 			"Сохранил ✅ Продолжительность сна: %d ч %d мин.",
 			int(duration.Hours()),
-			int(duration.Minutes()),
+			int(duration.Minutes())%60,
 		))
 
 	default:
@@ -162,7 +185,7 @@ func (p *Processor) addTime(chatID int64, userID int64, text string) (err error)
 		delete(p.preparing, userID)
 		p.mu.Unlock()
 
-		return p.tg.SendMessage(chatID, "Сценарий сбросился. Начни заново командой /addTime")
+		return p.tg.SendMessage(chatID, msgRepeatAdd)
 	}
 }
 
@@ -179,16 +202,14 @@ func (p *Processor) stat(userID, chatID int64, text string) (err error) {
 		}
 		p.mu.Unlock()
 
-		keyboard := telegram.ReplyKeyboardMarkup{
-			Keyboard: [][]telegram.KeyboardButton{
+		keyboard := telegram.InlineKeyboardMarkup{
+			Keyboard: [][]telegram.InlineKeyboardButton{
 				{
-					{Text: "7 дней"},
-					{Text: "14 дней"},
-					{Text: "Месяц"},
+					{Text: "7 дней", CallbackData: "stat:7"},
+					{Text: "14 дней", CallbackData: "stat:14"},
+					{Text: "Месяц", CallbackData: "stat:month"},
 				},
 			},
-			ResizeKeyboard:  true,
-			OneTimeKeyboard: true,
 		}
 
 		return p.tg.SendMessageWithButton(chatID, msgStat, keyboard) // sendButtonStat
@@ -204,9 +225,9 @@ func (p *Processor) stat(userID, chatID int64, text string) (err error) {
 
 	switch pr.step {
 	case "chose_period":
-		from, to, ok := statPeriod(text, time.Now())
+		from, to, ok := statPeriod(text, time.Now().In(userLocation))
 		if !ok {
-			return p.tg.SendMessage(chatID, "Выбери один из предложенных периодов")
+			return p.tg.SendMessage(chatID, msgStatErr)
 		}
 
 		records, err := p.storage.GetRecords(context.Background(), userID, from, to)
@@ -218,7 +239,7 @@ func (p *Processor) stat(userID, chatID int64, text string) (err error) {
 		delete(p.preparingStat, userID)
 
 		if len(records) == 0 {
-			return p.tg.SendMessage(chatID, "За выбранный период записей не нашлось")
+			return p.tg.SendMessage(chatID, msgNoRecords)
 		}
 
 		message := formatStat(records, from, to)
@@ -228,7 +249,7 @@ func (p *Processor) stat(userID, chatID int64, text string) (err error) {
 		delete(p.preparingStat, userID)
 		p.mu.Unlock()
 
-		return p.tg.SendMessage(chatID, "Сценарий статистики сбросился. Начни заново командой /stat")
+		return p.tg.SendMessage(chatID, msgStatErr)
 	}
 }
 
@@ -257,11 +278,11 @@ func statPeriod(text string, now time.Time) (time.Time, time.Time, bool) {
 	var duration time.Duration
 
 	switch strings.TrimSpace(text) {
-	case "7 дней":
+	case "stat:7":
 		duration = 7 * 24 * time.Hour
-	case "14 дней":
+	case "stat:14":
 		duration = 14 * 24 * time.Hour
-	case "Месяц":
+	case "stat:month":
 		duration = 30 * 24 * time.Hour
 	default:
 		return time.Time{}, time.Time{}, false
@@ -289,8 +310,8 @@ func formatStat(records []storage.SleepRecord, from, to time.Time) string {
 		fmt.Fprintf(
 			&b,
 			"%s — %s · %d ч %d мин\n",
-			record.FellAsleepAT.Format("02.01.2006 15:04"),
-			record.WokeUpAt.Format("02.01.2006 15:04"),
+			record.FellAsleepAT.In(userLocation).Format("02.01.2006 15:04"),
+			record.WokeUpAt.In(userLocation).Format("02.01.2006 15:04"),
 			hours,
 			minutes,
 		)

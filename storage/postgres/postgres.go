@@ -30,11 +30,11 @@ func New(dsn string) (*Storage, error) {
 
 func (s *Storage) SaveRecord(ctx context.Context, record *storage.SleepRecord) error {
 	q := `INSERT INTO records (user_id, fell_sleep, woke_up) 
-	VALUES ($1, $2, $3, $4)
+	VALUES ($1, $2, $3)
 	RETURNING id
 	`
 
-	if _, err := s.db.ExecContext(ctx, q, record.ID, record.UserID, record.FellAsleepAT, record.WokeUpAt); err != nil {
+	if _, err := s.db.ExecContext(ctx, q, record.UserID, record.FellAsleepAT, record.WokeUpAt); err != nil {
 		return fmt.Errorf("can't save record: %w", err)
 	}
 
@@ -76,7 +76,7 @@ func (s *Storage) RemoveRecord(ctx context.Context, userID, recordID int64) erro
 
 	count, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("can't check edited record: %w", err)
+		return fmt.Errorf("can't check deleted record: %w", err)
 	}
 
 	if count == 0 {
