@@ -80,7 +80,15 @@ func (p *Processor) addTime(chatID int64, userID int64, text string) (err error)
 		}
 		p.mu.Unlock()
 
-		return p.tg.SendMessage(chatID, msgFellSleep)
+		keyboard := telegram.InlineKeyboardMarkup{
+			Keyboard: [][]telegram.InlineKeyboardButton{
+				{
+					{Text: "Отмена", CallbackData: "addtime:cancel"},
+				},
+			},
+		}
+
+		return p.tg.SendMessageWithButton(chatID, msgFellSleep, keyboard)
 	}
 
 	p.mu.Lock()
@@ -93,6 +101,14 @@ func (p *Processor) addTime(chatID int64, userID int64, text string) (err error)
 
 	switch pr.step {
 	case "sleep_time":
+		if text == "addtime:cancel" {
+			p.mu.Lock()
+			delete(p.preparing, userID)
+			p.mu.Unlock()
+
+			return p.tg.SendMessage(chatID, msgCancelRecord)
+		}
+
 		sleepTime, parseErr := parsSleepTime(text, userLocation)
 		if parseErr != nil {
 			return p.tg.SendMessage(chatID, msgWrongTime)
@@ -109,9 +125,25 @@ func (p *Processor) addTime(chatID int64, userID int64, text string) (err error)
 		p.preparing[userID] = pr
 		p.mu.Unlock()
 
-		return p.tg.SendMessage(chatID, msgWokeUp)
+		keyboard := telegram.InlineKeyboardMarkup{
+			Keyboard: [][]telegram.InlineKeyboardButton{
+				{
+					{Text: "Отмена", CallbackData: "addtime:cancel"},
+				},
+			},
+		}
+
+		return p.tg.SendMessageWithButton(chatID, msgWokeUp, keyboard)
 
 	case "wake_time":
+		if text == "addtime:cancel" {
+			p.mu.Lock()
+			delete(p.preparing, userID)
+			p.mu.Unlock()
+
+			return p.tg.SendMessage(chatID, msgCancelRecord)
+		}
+
 		wakeTime, parseErr := parsSleepTime(text, userLocation)
 		if parseErr != nil {
 			return p.tg.SendMessage(chatID, msgWrongTime)
