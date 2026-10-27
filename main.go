@@ -17,7 +17,7 @@ const (
 )
 
 func main() {
-	dbURL := os.Getenv("DATABASE_URL_LOCAL") // для локльного подключения без докера запусти с DATABASE_URL_LOCAL
+	dbURL := os.Getenv("DATABASE_URL") // для локльного подключения без докера запусти с DATABASE_URL_LOCAL
 	if dbURL == "" {
 		log.Fatal("no db dsn")
 	}
