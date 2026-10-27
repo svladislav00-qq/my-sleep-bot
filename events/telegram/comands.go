@@ -107,58 +107,31 @@ func (p *Processor) addTime(chatID int64, userID int64, text string) (err error)
 
 	switch pr.step {
 	case "sleep_time":
-		if pr.mode == "edit" {
-			if text == "addtime:cancelEdit" {
-				pr.step = "confirm"
+		return p.handleSleepTime(chatID, userID, text, pr)
+	case "wake_time":
+		return p.handleWakeTime(chatID, userID, text, pr)
+	case "confirm":
+		return p.handleConfirm(chatID, userID, text, pr)
+	case "edit":
+		return p.handleEdit(chatID, userID, text, pr)
+	case "choose_edit":
+		return p.handleChoseEdit(chatID, userID, text, pr)
+	default:
+		log.Printf("addTime: unexpected mode=%q step=%q input=%q",
+			pr.mode, pr.step, text)
 
-				p.setPreparing(userID, pr)
+		return p.tg.SendMessage(chatID, msgWrongTime)
+	}
+}
 
-				return p.showConfirmation(chatID, pr.sleepTime, pr.wakeTime)
-			}
-
-			sleepTime, errorMessage := parseUserTime(text)
-			if errorMessage != "" {
-				return p.tg.SendMessage(chatID, errorMessage)
-			}
-
-			pr.sleepTime = sleepTime
+func (p *Processor) handleSleepTime(chatID, userID int64, text string, pr Preparing) error {
+	if pr.mode == "edit" {
+		if text == "addtime:cancelEdit" {
 			pr.step = "confirm"
 
 			p.setPreparing(userID, pr)
 
 			return p.showConfirmation(chatID, pr.sleepTime, pr.wakeTime)
-		}
-
-		if pr.mode == "editBoth" {
-			if text == "addtime:cancelEdit" {
-				pr.step = "confirm"
-
-				p.setPreparing(userID, pr)
-
-				return p.showConfirmation(chatID, pr.sleepTime, pr.wakeTime)
-			}
-
-			sleepTime, errorMessage := parseUserTime(text)
-			if errorMessage != "" {
-				return p.tg.SendMessage(chatID, errorMessage)
-			}
-
-			pr.proposedSleepTime = sleepTime
-			pr.step = "wake_time"
-
-			p.setPreparing(userID, pr)
-
-			keyboard := editInputKeyboard()
-
-			return p.tg.SendMessageWithButton(chatID, msgWokeUp, keyboard)
-		}
-
-		if text == "addtime:cancel" {
-			p.mu.Lock()
-			delete(p.preparing, userID)
-			p.mu.Unlock()
-
-			return p.tg.SendMessage(chatID, msgCancelRecord)
 		}
 
 		sleepTime, errorMessage := parseUserTime(text)
@@ -167,44 +140,15 @@ func (p *Processor) addTime(chatID int64, userID int64, text string) (err error)
 		}
 
 		pr.sleepTime = sleepTime
-		pr.step = "wake_time"
+		pr.step = "confirm"
 
 		p.setPreparing(userID, pr)
 
-		keyboard := telegram.InlineKeyboardMarkup{
-			Keyboard: [][]telegram.InlineKeyboardButton{
-				{
-					{Text: "Отменить запись", CallbackData: "addtime:cancel"},
-				},
-			},
-		}
+		return p.showConfirmation(chatID, pr.sleepTime, pr.wakeTime)
+	}
 
-		return p.tg.SendMessageWithButton(chatID, msgWokeUp, keyboard)
-
-	case "wake_time":
-		if pr.mode == "edit" {
-			if text == "addtime:cancelEdit" {
-				pr.step = "confirm"
-
-				p.setPreparing(userID, pr)
-
-				return p.showConfirmation(chatID, pr.sleepTime, pr.wakeTime)
-			}
-
-			wakeTime, parseErr := parsSleepTime(text, userLocation)
-			if parseErr != nil {
-				return p.tg.SendMessage(chatID, msgWrongTime)
-			}
-
-			if !wakeTime.After(pr.sleepTime) {
-				return p.tg.SendMessage(chatID, msgFellWokeUpErr)
-			}
-
-			if wakeTime.After(time.Now().In(userLocation)) {
-				return p.tg.SendMessage(chatID, msgFutureTime)
-			}
-
-			pr.wakeTime = wakeTime
+	if pr.mode == "editBoth" {
+		if text == "addtime:cancelEdit" {
 			pr.step = "confirm"
 
 			p.setPreparing(userID, pr)
@@ -212,80 +156,71 @@ func (p *Processor) addTime(chatID int64, userID int64, text string) (err error)
 			return p.showConfirmation(chatID, pr.sleepTime, pr.wakeTime)
 		}
 
-		if pr.mode == "editBoth" {
-			if text == "addtime:cancelEdit" {
-				pr.step = "confirm"
+		sleepTime, errorMessage := parseUserTime(text)
+		if errorMessage != "" {
+			return p.tg.SendMessage(chatID, errorMessage)
+		}
 
-				p.setPreparing(userID, pr)
+		pr.proposedSleepTime = sleepTime
+		pr.step = "wake_time"
 
-				return p.showConfirmation(chatID, pr.sleepTime, pr.wakeTime)
-			}
+		p.setPreparing(userID, pr)
 
-			wakeTime, parseErr := parsSleepTime(text, userLocation)
-			if parseErr != nil {
-				return p.tg.SendMessage(chatID, msgWrongTime)
-			}
+		keyboard := editInputKeyboard()
 
-			if !wakeTime.After(pr.proposedSleepTime) {
-				return p.tg.SendMessage(chatID, msgFellWokeUpErr)
-			}
+		return p.tg.SendMessageWithButton(chatID, msgWokeUp, keyboard)
+	}
 
-			if wakeTime.After(time.Now().In(userLocation)) {
-				return p.tg.SendMessage(chatID, msgFutureTime)
-			}
+	if text == "addtime:cancel" {
+		p.mu.Lock()
+		delete(p.preparing, userID)
+		p.mu.Unlock()
 
-			duration := wakeTime.Sub(pr.proposedSleepTime)
-			if duration > 14*time.Hour {
-				return p.tg.SendMessage(chatID, msgBadDuration)
-			}
+		return p.tg.SendMessage(chatID, msgCancelRecord)
+	}
 
-			pr.proposedWakeTime = wakeTime
+	sleepTime, errorMessage := parseUserTime(text)
+	if errorMessage != "" {
+		return p.tg.SendMessage(chatID, errorMessage)
+	}
+
+	pr.sleepTime = sleepTime
+	pr.step = "wake_time"
+
+	p.setPreparing(userID, pr)
+
+	keyboard := telegram.InlineKeyboardMarkup{
+		Keyboard: [][]telegram.InlineKeyboardButton{
+			{
+				{Text: "Отменить запись", CallbackData: "addtime:cancel"},
+			},
+		},
+	}
+
+	return p.tg.SendMessageWithButton(chatID, msgWokeUp, keyboard)
+}
+
+func (p *Processor) handleWakeTime(chatID, userID int64, text string, pr Preparing) error {
+	if pr.mode == "edit" {
+		if text == "addtime:cancelEdit" {
 			pr.step = "confirm"
 
 			p.setPreparing(userID, pr)
 
-			summary := fmt.Sprintf(
-				"Проверь запись: %s - %s. Продолжительность сна : %d ч %d мин. Всё верно? да/нет",
-				pr.proposedSleepTime.Format("02.01.2006 15:04"),
-				pr.proposedWakeTime.Format("02.01.2006 15:04"),
-				int(duration.Hours()),
-				int(duration.Minutes())%60,
-			)
-
-			keyboard := telegram.InlineKeyboardMarkup{
-				Keyboard: [][]telegram.InlineKeyboardButton{
-					{
-						{Text: "Да", CallbackData: "addtime:ok"},
-						{Text: "Нет, изменить", CallbackData: "addtime:edit"},
-						{Text: "Отменить изменения", CallbackData: "addtime:cancelEdit"},
-					},
-				},
-			}
-
-			return p.tg.SendMessageWithButton(chatID, summary, keyboard)
+			return p.showConfirmation(chatID, pr.sleepTime, pr.wakeTime)
 		}
 
-		if text == "addtime:cancel" {
-			p.mu.Lock()
-			delete(p.preparing, userID)
-			p.mu.Unlock()
-
-			return p.tg.SendMessage(chatID, msgCancelRecord)
+		wakeTime, parseErr := parsSleepTime(text, userLocation)
+		if parseErr != nil {
+			return p.tg.SendMessage(chatID, msgWrongTime)
 		}
 
-		wakeTime, errorMessage := parseUserTime(text)
-		if errorMessage != "" {
-			return p.tg.SendMessage(chatID, errorMessage)
+		if !wakeTime.After(pr.sleepTime) {
+			return p.tg.SendMessage(chatID, msgFellWokeUpErr)
 		}
 
-		sleepTime := pr.sleepTime
-		if pr.mode == "editBoth" {
-			sleepTime = pr.proposedSleepTime
-		}
-
-		errorMessage = validateSleepInterval(sleepTime, wakeTime)
-		if errorMessage != "" {
-			return p.tg.SendMessage(chatID, errorMessage)
+		if wakeTime.After(time.Now().In(userLocation)) {
+			return p.tg.SendMessage(chatID, msgFutureTime)
 		}
 
 		pr.wakeTime = wakeTime
@@ -294,96 +229,107 @@ func (p *Processor) addTime(chatID int64, userID int64, text string) (err error)
 		p.setPreparing(userID, pr)
 
 		return p.showConfirmation(chatID, pr.sleepTime, pr.wakeTime)
+	}
 
-	case "confirm":
-		if pr.mode == "editBoth" && text == "addtime:cancelEdit" {
-			pr.proposedSleepTime = time.Time{}
-			pr.proposedWakeTime = time.Time{}
+	if pr.mode == "editBoth" {
+		if text == "addtime:cancelEdit" {
 			pr.step = "confirm"
-			pr.mode = "create"
 
 			p.setPreparing(userID, pr)
 
 			return p.showConfirmation(chatID, pr.sleepTime, pr.wakeTime)
 		}
 
-		if text == "addtime:edit" {
-			pr.step = "choose_edit"
-			pr.mode = "edit"
+		wakeTime, parseErr := parsSleepTime(text, userLocation)
+		if parseErr != nil {
+			return p.tg.SendMessage(chatID, msgWrongTime)
+		}
 
-			keyboard := telegram.InlineKeyboardMarkup{
-				Keyboard: [][]telegram.InlineKeyboardButton{
-					{
-						{Text: "Изменить время когда уснул", CallbackData: "addtime:editFell"},
-						{Text: "Изменить время когда проснулся", CallbackData: "addtime:editWoke"},
-						{Text: "Изменить оба времени", CallbackData: "addtime:all"},
-					},
+		if !wakeTime.After(pr.proposedSleepTime) {
+			return p.tg.SendMessage(chatID, msgFellWokeUpErr)
+		}
+
+		if wakeTime.After(time.Now().In(userLocation)) {
+			return p.tg.SendMessage(chatID, msgFutureTime)
+		}
+
+		duration := wakeTime.Sub(pr.proposedSleepTime)
+		if duration > 14*time.Hour {
+			return p.tg.SendMessage(chatID, msgBadDuration)
+		}
+
+		pr.proposedWakeTime = wakeTime
+		pr.step = "confirm"
+
+		p.setPreparing(userID, pr)
+
+		summary := fmt.Sprintf(
+			"Проверь запись: %s - %s. Продолжительность сна : %d ч %d мин. Всё верно? да/нет",
+			pr.proposedSleepTime.Format("02.01.2006 15:04"),
+			pr.proposedWakeTime.Format("02.01.2006 15:04"),
+			int(duration.Hours()),
+			int(duration.Minutes())%60,
+		)
+
+		keyboard := telegram.InlineKeyboardMarkup{
+			Keyboard: [][]telegram.InlineKeyboardButton{
+				{
+					{Text: "Да", CallbackData: "addtime:ok"},
+					{Text: "Нет, изменить", CallbackData: "addtime:edit"},
+					{Text: "Отменить изменения", CallbackData: "addtime:cancelEdit"},
 				},
-			}
-
-			p.setPreparing(userID, pr)
-
-			return p.tg.SendMessageWithButton(chatID, msgWhatEdit, keyboard)
+			},
 		}
 
-		if text == "addtime:no" {
-			keyboard := telegram.InlineKeyboardMarkup{
-				Keyboard: [][]telegram.InlineKeyboardButton{
-					{
-						{Text: "Исправить запись", CallbackData: "addtime:edit"},
-						{Text: "Отменить запись", CallbackData: "addtime:cancel"},
-					},
-				},
-			}
+		return p.tg.SendMessageWithButton(chatID, summary, keyboard)
+	}
 
-			pr.step = "edit"
-
-			p.setPreparing(userID, pr)
-
-			return p.tg.SendMessageWithButton(chatID, msgEditOrDelete, keyboard)
-		}
-
-		sleepTime := pr.sleepTime
-		wakeTime := pr.wakeTime
-
-		if pr.mode == "editBoth" {
-			sleepTime = pr.proposedSleepTime
-			wakeTime = pr.proposedWakeTime
-		}
-
-		if text != "addtime:ok" {
-			return p.tg.SendMessage(chatID, "Выбери действие кнопкой выше")
-		}
-
-		record := storage.SleepRecord{
-			UserID:       userID,
-			FellAsleepAT: sleepTime,
-			WokeUpAt:     wakeTime,
-		}
-
-		if err := p.storage.SaveRecord(context.Background(), &record); err != nil {
-			return err
-		}
-
+	if text == "addtime:cancel" {
 		p.mu.Lock()
 		delete(p.preparing, userID)
 		p.mu.Unlock()
 
-		duration := wakeTime.Sub(sleepTime)
-		return p.tg.SendMessage(chatID, fmt.Sprintf(
-			"Сохранил ✅\n\nПродолжительность сна: %d ч %d мин.",
-			int(duration.Hours()),
-			int(duration.Minutes())%60,
-		))
+		return p.tg.SendMessage(chatID, msgCancelRecord)
+	}
 
-	case "edit":
-		if text == "addtime:cancel" {
-			p.mu.Lock()
-			delete(p.preparing, userID)
-			p.mu.Unlock()
+	wakeTime, errorMessage := parseUserTime(text)
+	if errorMessage != "" {
+		return p.tg.SendMessage(chatID, errorMessage)
+	}
 
-			return p.tg.SendMessage(chatID, msgCancelRecord)
-		}
+	sleepTime := pr.sleepTime
+	if pr.mode == "editBoth" {
+		sleepTime = pr.proposedSleepTime
+	}
+
+	errorMessage = validateSleepInterval(sleepTime, wakeTime)
+	if errorMessage != "" {
+		return p.tg.SendMessage(chatID, errorMessage)
+	}
+
+	pr.wakeTime = wakeTime
+	pr.step = "confirm"
+
+	p.setPreparing(userID, pr)
+
+	return p.showConfirmation(chatID, pr.sleepTime, pr.wakeTime)
+}
+
+func (p *Processor) handleConfirm(chatID, userID int64, text string, pr Preparing) error {
+	if pr.mode == "editBoth" && text == "addtime:cancelEdit" {
+		pr.proposedSleepTime = time.Time{}
+		pr.proposedWakeTime = time.Time{}
+		pr.step = "confirm"
+		pr.mode = "create"
+
+		p.setPreparing(userID, pr)
+
+		return p.showConfirmation(chatID, pr.sleepTime, pr.wakeTime)
+	}
+
+	if text == "addtime:edit" {
+		pr.step = "choose_edit"
+		pr.mode = "edit"
 
 		keyboard := telegram.InlineKeyboardMarkup{
 			Keyboard: [][]telegram.InlineKeyboardButton{
@@ -395,49 +341,119 @@ func (p *Processor) addTime(chatID int64, userID int64, text string) (err error)
 			},
 		}
 
-		pr.step = "choose_edit"
-		pr.mode = "edit"
-
 		p.setPreparing(userID, pr)
 
 		return p.tg.SendMessageWithButton(chatID, msgWhatEdit, keyboard)
+	}
 
-	case "choose_edit":
-		switch text {
-		case "addtime:editFell":
-			pr.step = "sleep_time"
-
-			keyboard := editInputKeyboard()
-
-			p.setPreparing(userID, pr)
-
-			return p.tg.SendMessageWithButton(chatID, msgFellSleep, keyboard)
-		case "addtime:editWoke":
-			pr.step = "wake_time"
-
-			keyboard := editInputKeyboard()
-
-			p.setPreparing(userID, pr)
-
-			return p.tg.SendMessageWithButton(chatID, msgWokeUp, keyboard)
-		case "addtime:all":
-			pr.mode = "editBoth"
-			pr.step = "sleep_time"
-			pr.proposedSleepTime = time.Time{}
-			pr.proposedWakeTime = time.Time{}
-
-			keyboard := editInputKeyboard()
-
-			p.setPreparing(userID, pr)
-
-			return p.tg.SendMessageWithButton(chatID, msgFellSleep, keyboard)
-		default:
-			return p.tg.SendMessage(chatID, msgWrongTime)
+	if text == "addtime:no" {
+		keyboard := telegram.InlineKeyboardMarkup{
+			Keyboard: [][]telegram.InlineKeyboardButton{
+				{
+					{Text: "Исправить запись", CallbackData: "addtime:edit"},
+					{Text: "Отменить запись", CallbackData: "addtime:cancel"},
+				},
+			},
 		}
-	default:
-		log.Printf("addTime: unexpected mode=%q step=%q input=%q",
-			pr.mode, pr.step, text)
 
+		pr.step = "edit"
+
+		p.setPreparing(userID, pr)
+
+		return p.tg.SendMessageWithButton(chatID, msgEditOrDelete, keyboard)
+	}
+
+	sleepTime := pr.sleepTime
+	wakeTime := pr.wakeTime
+
+	if pr.mode == "editBoth" {
+		sleepTime = pr.proposedSleepTime
+		wakeTime = pr.proposedWakeTime
+	}
+
+	if text != "addtime:ok" {
+		return p.tg.SendMessage(chatID, "Выбери действие кнопкой выше")
+	}
+
+	record := storage.SleepRecord{
+		UserID:       userID,
+		FellAsleepAT: sleepTime,
+		WokeUpAt:     wakeTime,
+	}
+
+	if err := p.storage.SaveRecord(context.Background(), &record); err != nil {
+		return err
+	}
+
+	p.mu.Lock()
+	delete(p.preparing, userID)
+	p.mu.Unlock()
+
+	duration := wakeTime.Sub(sleepTime)
+	return p.tg.SendMessage(chatID, fmt.Sprintf(
+		"Сохранил ✅\n\nПродолжительность сна: %d ч %d мин.",
+		int(duration.Hours()),
+		int(duration.Minutes())%60,
+	))
+}
+
+func (p *Processor) handleEdit(chatID, userID int64, text string, pr Preparing) error {
+	if text == "addtime:cancel" {
+		p.mu.Lock()
+		delete(p.preparing, userID)
+		p.mu.Unlock()
+
+		return p.tg.SendMessage(chatID, msgCancelRecord)
+	}
+
+	keyboard := telegram.InlineKeyboardMarkup{
+		Keyboard: [][]telegram.InlineKeyboardButton{
+			{
+				{Text: "Изменить время когда уснул", CallbackData: "addtime:editFell"},
+				{Text: "Изменить время когда проснулся", CallbackData: "addtime:editWoke"},
+				{Text: "Изменить оба времени", CallbackData: "addtime:all"},
+			},
+		},
+	}
+
+	pr.step = "choose_edit"
+	pr.mode = "edit"
+
+	p.setPreparing(userID, pr)
+
+	return p.tg.SendMessageWithButton(chatID, msgWhatEdit, keyboard)
+}
+
+func (p *Processor) handleChoseEdit(chatID, userID int64, text string, pr Preparing) error {
+	switch text {
+	case "addtime:editFell":
+		pr.step = "sleep_time"
+
+		keyboard := editInputKeyboard()
+
+		p.setPreparing(userID, pr)
+
+		return p.tg.SendMessageWithButton(chatID, msgFellSleep, keyboard)
+	case "addtime:editWoke":
+		pr.step = "wake_time"
+
+		keyboard := editInputKeyboard()
+
+		p.setPreparing(userID, pr)
+
+		return p.tg.SendMessageWithButton(chatID, msgWokeUp, keyboard)
+	case "addtime:all":
+		pr.mode = "editBoth"
+		pr.step = "sleep_time"
+		pr.proposedSleepTime = time.Time{}
+		pr.proposedWakeTime = time.Time{}
+
+		keyboard := editInputKeyboard()
+
+		p.setPreparing(userID, pr)
+
+		return p.tg.SendMessageWithButton(chatID, msgFellSleep, keyboard)
+	default:
 		return p.tg.SendMessage(chatID, msgWrongTime)
 	}
 }
@@ -527,6 +543,33 @@ func parsSleepTime(text string, loc *time.Location) (time.Time, error) {
 	return t, nil
 }
 
+func (p *Processor) showConfirmation(chatID int64, sleepTime, wakeTime time.Time) error {
+	duration := wakeTime.Sub(sleepTime)
+	maxSleepDuration := 14 * time.Hour
+
+	if duration > maxSleepDuration {
+		return p.tg.SendMessage(chatID, msgBadDuration)
+	}
+
+	keyboard := telegram.InlineKeyboardMarkup{
+		Keyboard: [][]telegram.InlineKeyboardButton{
+			{
+				{Text: "Да", CallbackData: "addtime:ok"},
+				{Text: "Нет", CallbackData: "addtime:no"},
+			},
+		},
+	}
+
+	summary := fmt.Sprintf(
+		"Проверь запись: %s - %s.\nПродолжительность сна : %d ч %d мин. Всё верно?",
+		sleepTime.Format("02.01.2006 15:04"),
+		wakeTime.Format("02.01.2006 15:04"),
+		int(duration.Hours()),
+		int(duration.Minutes())%60,
+	)
+	return p.tg.SendMessageWithButton(chatID, summary, keyboard)
+}
+
 func statPeriod(text string, now time.Time) (time.Time, time.Time, bool) {
 	var duration time.Duration
 
@@ -571,33 +614,6 @@ func formatStat(records []storage.SleepRecord, from, to time.Time) string {
 	}
 
 	return strings.TrimSpace(b.String())
-}
-
-func (p *Processor) showConfirmation(chatID int64, sleepTime, wakeTime time.Time) error {
-	duration := wakeTime.Sub(sleepTime)
-	maxSleepDuration := 14 * time.Hour
-
-	if duration > maxSleepDuration {
-		return p.tg.SendMessage(chatID, msgBadDuration)
-	}
-
-	keyboard := telegram.InlineKeyboardMarkup{
-		Keyboard: [][]telegram.InlineKeyboardButton{
-			{
-				{Text: "Да", CallbackData: "addtime:ok"},
-				{Text: "Нет", CallbackData: "addtime:no"},
-			},
-		},
-	}
-
-	summary := fmt.Sprintf(
-		"Проверь запись: %s - %s.\nПродолжительность сна : %d ч %d мин. Всё верно?",
-		sleepTime.Format("02.01.2006 15:04"),
-		wakeTime.Format("02.01.2006 15:04"),
-		int(duration.Hours()),
-		int(duration.Minutes())%60,
-	)
-	return p.tg.SendMessageWithButton(chatID, summary, keyboard)
 }
 
 func parseUserTime(text string) (time.Time, string) {
