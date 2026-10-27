@@ -134,6 +134,14 @@ func (p *Processor) handleSleepTime(chatID, userID int64, text string, pr Prepar
 			return p.showConfirmation(chatID, pr.sleepTime, pr.wakeTime)
 		}
 
+		if text == "addtime:cancel" {
+			p.mu.Lock()
+			delete(p.preparing, userID)
+			p.mu.Unlock()
+
+			return p.tg.SendMessage(chatID, msgCancelRecord)
+		}
+
 		sleepTime, errorMessage := parseUserTime(text)
 		if errorMessage != "" {
 			return p.tg.SendMessage(chatID, errorMessage)
@@ -208,6 +216,14 @@ func (p *Processor) handleWakeTime(chatID, userID int64, text string, pr Prepari
 			p.setPreparing(userID, pr)
 
 			return p.showConfirmation(chatID, pr.sleepTime, pr.wakeTime)
+		}
+
+		if text == "addtime:cancel" {
+			p.mu.Lock()
+			delete(p.preparing, userID)
+			p.mu.Unlock()
+
+			return p.tg.SendMessage(chatID, msgCancelRecord)
 		}
 
 		wakeTime, parseErr := parsSleepTime(text, userLocation)
@@ -427,6 +443,7 @@ func (p *Processor) handleEdit(chatID, userID int64, text string, pr Preparing) 
 func (p *Processor) handleChoseEdit(chatID, userID int64, text string, pr Preparing) error {
 	switch text {
 	case "addtime:editFell":
+		pr.mode = "edit"
 		pr.step = "sleep_time"
 
 		keyboard := editInputKeyboard()
@@ -435,6 +452,7 @@ func (p *Processor) handleChoseEdit(chatID, userID int64, text string, pr Prepar
 
 		return p.tg.SendMessageWithButton(chatID, msgFellSleep, keyboard)
 	case "addtime:editWoke":
+		pr.mode = "edit"
 		pr.step = "wake_time"
 
 		keyboard := editInputKeyboard()
